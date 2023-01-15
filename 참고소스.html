@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+
+<html>
+<head>
+<meta charset="UTF-8">
+<title>Insert title here</title>
+</head>
+<body>
+    <button onclick="createOffer();">오퍼를 생성해요</button>
+    <input id="messageInput" />
+    <button onclick="sendMessage();">메세지를 보내봐요</button>
+    <script>
+        // 웹 페이지를 시작하자 마자 웹소켓을 연결해요. 그 정보는 conn에 담을게요
+        var conn = new WebSocket('ws://localhost:8080/socket');
+
+        // conn이 성공적으로 웹소켓에 연결되었다면 실행될 콜백함수에요
+        conn.onopen = function() {
+            // 일단 여기까지 왔는지 로그를 찍어 볼게요
+            console.log("웹소켓이 연결되었어요");
+            initialize();
+        };
+
+        // 이 브라우저가 같은 웹소켓에 연결된 사람들에게 메세지를 받았을 때 실행될
+        // 콜백함수에요
+        conn.onmessage = function(msg) {
+            console.log("메세지를 받았어요 메세지는:", msg.data);
+            var content = JSON.parse(msg.data);
+            var data = content.data;
+            if (content.event == "offer") {
+                handleOffer(data);
+            } else if (content.event == "answer") {
+                handleAnswer(data);
+            } else if (content.event == "candidate") {
+                handleCandidate(data);
+            }
+        }
+
+        // message는 event와 data를 키로 갖는 객체에요 이 객체를 웹소켓통신으로 보내요
+        function send(message) {
+            conn.send(JSON.stringify(message));
+        }
+
+        var peerConnection;
+        var dataChannel;
+        var input = document.getElementById("messageInput");
+
+        function initialize() {
+            console.log("이니셜라이즈 실행")
+            var configuration = {
+                "iceServers" : [{
+                    "url" : "stun:stun.l.google.com:19302"
+                }]
+            }
+
+            peerConnection = new RTCPeerConnection(configuration);
+
+            dataChannel = peerConnection.createDataChannel("dataChannel")
+
+            // peerConnection 객체의 localDescription이 설정되면 트리거되요.
+            // 로컬디스크립션은 내가 누군지를 적어 놓는거에요
+            // 이 로컬디스크립션에 적어 놓는 것을 웹소켓을 통해 보내요
+            peerConnection.onicecandidate = function(event) {
+                console.log("onicecandidate가 실행되어요", event.candidate)
+                if (event.candidate) {
+                    send({
+                        event: "candidate",
+                        data: event.candidate
+                    })
+                }
+            }
+            
+            dataChannel.onerror = function(error) {
+                console.log("에러가 발생했어요:", error);
+            }
+
+            dataChannel.onclose = function() {
+                console.log("데이터 채널이 폐쇄되었어요");
+            }
+
+            dataChannel.onmessage = function(event) {
+                console.log("메세지를 받았어요: ", event);
+            }
+
+            peerConnection.ondatachannel = function(event) {
+                console.log("채널을 받을게요: ", event);
+                dataChannel = event.channel;
+            }
+            console.log("이니셜라이즈 끝");
+        }
+
+        // 오퍼를 생성하는 함수에요
+        // 로컬디스크립션에 자신을 등록하고 오퍼를 웹소켓으로 전송해요
+        function createOffer() {
+            console.log("오퍼를 생성할게요");
+            peerConnection.createOffer(function(offer) {
+                peerConnection.setLocalDescription(offer);
+                send({
+                    event: "offer",
+                    data: offer
+                })
+            }, function(error) {
+                alert("오퍼 생성중 에러 발생")
+            })
+        }
+
+        // 오퍼를 받은 사람이 실행하는 함수에요
+        // 오퍼를 웹소켓으로 받으면 그 오퍼를 리모트 디스크립션으로 등록해요
+        // 그리고 대답을 생성하는데 그 콜백함수를 실행하면서 로컬디스크립션으로 자신을 등록하고 자신을 대답으로 보내요
+        function handleOffer(offer) {
+            peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
+
+            peerConnection.createAnswer(function(answer) {
+                console.log("대답을 생성중이에요");
+                peerConnection.setLocalDescription(answer);
+                send({
+                    event: "answer",
+                    data: answer
+                })
+            }, function(error) {
+                alert("대답 생성중 에러발생")
+            })
+        }
+
+        // 누군가 로컬디스크립션에 자신을 등록하면 onicecandidate이 실행되어 웹소켓을 통해 그내용을 리모트피어에게 보내요
+        // 그럼 리모트 피어가 이 함수를 실행해요
+        // 이함수에서는 캔디데이트를 추가해줘요
+        function handleCandidate(candidate) {
+            console.log("캔디데이트를 받았으니 추가할게요");
+            peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
+        }
+        function handleAnswer(answer) {
+            peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+            console.log("커넥션이 잘 설립되었어요");
+        }
+        function sendMessage() {
+            dataChannel.send(input.value);
+            input.value = ""
+        }
+    </script>
+</body>
+</html>
